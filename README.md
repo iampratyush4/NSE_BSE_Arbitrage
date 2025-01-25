@@ -1,5 +1,3 @@
-# NSE_BSE_Arbitrage
- 
 # NSE-BSE Arbitrage Bot
 
 This script identifies arbitrage opportunities between the NSE (National Stock Exchange) and BSE (Bombay Stock Exchange) for selected stocks and executes trades automatically. The script is designed for real-time monitoring and efficient execution.
@@ -100,6 +98,35 @@ time.sleep(5)  # Time in seconds
 
 ---
 
+## File Descriptions
+
+1. **NSE_BSE_Arbitrage.py**:
+   - The main script that implements the arbitrage bot logic.
+   - Handles session management, market data retrieval, and trade execution.
+
+2. **login_manager.py**:
+   - Manages user login/logout for the trading API.
+   - Saves and retrieves sessions using a session file (`session.pkl`).
+
+3. **Cred.py**:
+   - Stores API credentials required for connecting to the 5Paisa API.
+   - Replace placeholder values with your actual credentials:
+     ```python
+     cred = {
+         "APP_NAME": "",
+         "APP_SOURCE": "",
+         "USER_ID": "",
+         "PASSWORD": "",
+         "USER_KEY": "",
+         "ENCRYPTION_KEY": ""
+     }
+     client_code = ""
+     totp_secret = ""
+     pin = ""
+     ```
+
+---
+
 ## Error Handling
 
 - If the session file is missing or corrupted, the script will attempt to log in again.
@@ -135,7 +162,7 @@ No arbitrage for TCS
 
 ## License
 
-This Porject is Buit by Pratyush Upadhyay
+This Project is built by Pratyush upadhyay
 
 ---
 
