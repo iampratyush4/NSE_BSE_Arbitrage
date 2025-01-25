@@ -11,5 +11,4 @@ cred={
     }
 
 client_code = ""
-totp_secret=""
 pin=""
