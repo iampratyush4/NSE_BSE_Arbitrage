@@ -30,10 +30,14 @@ def get_market_data(client, stock):
                 "NSE": {
                     "bid": market_data.get("NSEBidPrice", 0),
                     "ask": market_data.get("NSEAskPrice", 0),
+                    "bid_volume": market_data.get("NSEBidVolume", 0),
+                    "ask_volume": market_data.get("NSEAskVolume", 0),
                 },
                 "BSE": {
                     "bid": market_data.get("BSEBidPrice", 0),
                     "ask": market_data.get("BSEAskPrice", 0),
+                    "bid_volume": market_data.get("BSEBidVolume", 0),
+                    "ask_volume": market_data.get("BSEAskVolume", 0),
                 },
             }
         else:
@@ -46,8 +50,22 @@ def calculate_quantity(margin_per_stock, max_price):
     """Calculate the quantity based on the margin for each stock and the maximum price."""
     return max(1, margin_per_stock // max_price)
 
+def verify_order_execution(client, order_id):
+    """Verify if the order has been executed successfully."""
+    try:
+        status = client.check_order_status(order_id)
+        if status == "EXECUTED":
+            print(f"Order {order_id} successfully executed.")
+            return True
+        else:
+            print(f"Order {order_id} not executed yet. Status: {status}")
+            return False
+    except Exception as e:
+        print(f"Error verifying order {order_id}: {e}")
+        return False
+
 def execute_trade(client, stock, exchange, order_type, price, quantity):
-    """Execute buy/sell trade."""
+    """Execute buy/sell trade and verify its execution."""
     try:
         order = {
             "Exchange": exchange,
@@ -57,8 +75,19 @@ def execute_trade(client, stock, exchange, order_type, price, quantity):
             "Quantity": quantity,
         }
         response = client.place_order(order)
-        print(f"Executed {order_type} order for {stock} on {exchange} at {price} x {quantity}: {response}")
-        return price * quantity
+        order_id = response.get("OrderID")
+        print(f"Placed {order_type} order for {stock} on {exchange} at {price} x {quantity}: {response}")
+
+        # Verify order execution
+        if order_id:
+            if verify_order_execution(client, order_id):
+                return price * quantity
+            else:
+                print(f"Order {order_id} for {stock} on {exchange} failed to execute.")
+                return 0
+        else:
+            print("No OrderID returned in response.")
+            return 0
     except Exception as e:
         print(f"Error in execute_trade for {stock}: {e}")
         return 0
@@ -73,16 +102,21 @@ def check_arbitrage(client, stock, margin_per_stock, executed_orders):
     nse_ask = data["NSE"]["ask"]
     bse_bid = data["BSE"]["bid"]
     bse_ask = data["BSE"]["ask"]
+    nse_bid_volume = data["NSE"]["bid_volume"]
+    nse_ask_volume = data["NSE"]["ask_volume"]
+    bse_bid_volume = data["BSE"]["bid_volume"]
+    bse_ask_volume = data["BSE"]["ask_volume"]
 
     max_price = max(nse_ask, bse_bid, nse_bid, bse_ask)
+    quantity = calculate_quantity(margin_per_stock, max_price)
 
-    if bse_bid - nse_ask > ARBITRAGE_THRESHOLD:
-        quantity = calculate_quantity(margin_per_stock, max_price)
+    if bse_bid - nse_ask > ARBITRAGE_THRESHOLD and \
+       nse_ask_volume >= 5 * quantity and bse_bid_volume >= 5 * quantity:
         total_amount = execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
                        execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
         executed_orders.append(total_amount)
-    elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD:
-        quantity = calculate_quantity(margin_per_stock, max_price)
+    elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD and \
+         bse_ask_volume >= 5 * quantity and nse_bid_volume >= 5 * quantity:
         total_amount = execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
                        execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
         executed_orders.append(total_amount)
