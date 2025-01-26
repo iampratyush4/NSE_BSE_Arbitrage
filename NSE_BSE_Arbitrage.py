@@ -1,8 +1,14 @@
 import pickle
 import os
 import time
-from login_manager import login, logout_and_login
 import configparser
+import asyncio
+import logging
+from concurrent.futures import ThreadPoolExecutor
+from login_manager import login, logout_and_login
+
+# Configure logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Read configuration
 config = configparser.ConfigParser()
@@ -13,26 +19,28 @@ ARBITRAGE_THRESHOLD = float(config["TRADE"]["ArbitrageThreshold"])
 SESSION_FILE = config["FILES"]["SessionFile"]
 stocks = config["STOCKS"]["StockList"].split(", ")
 
+# Thread pool for concurrent tasks
+executor = ThreadPoolExecutor(max_workers=10)
 
-def perform_action():
+async def perform_action():
     """Performs actions using the logged-in session."""
     try:
         if os.path.exists(SESSION_FILE):
             with open(SESSION_FILE, "rb") as f:
                 client = pickle.load(f)
-                print("Using existing session.")
+                logging.info("Using existing session.")
                 return client
         else:
-            print("No active session found. Logging in...")
-            return login()
+            logging.info("No active session found. Logging in...")
+            return await asyncio.to_thread(login)
     except Exception as e:
-        print(f"Error in perform_action: {e}")
+        logging.error(f"Error in perform_action: {e}")
         return None
 
-def get_market_data(client, stock):
+async def get_market_data(client, stock):
     """Fetch bid and ask prices for NSE and BSE."""
     try:
-        market_data = client.fetch_market_depth(stock)
+        market_data = await asyncio.to_thread(client.fetch_market_depth, stock)
         if market_data:
             return {
                 "NSE": {
@@ -49,30 +57,30 @@ def get_market_data(client, stock):
                 },
             }
         else:
-            print(f"No market data available for {stock}.")
+            logging.warning(f"No market data available for {stock}.")
     except Exception as e:
-        print(f"Error in get_market_data for {stock}: {e}")
+        logging.error(f"Error in get_market_data for {stock}: {e}")
     return None
 
-def calculate_quantity(margin_per_stock, max_price):
+async def calculate_quantity(margin_per_stock, max_price):
     """Calculate the quantity based on the margin for each stock and the maximum price."""
     return max(1, margin_per_stock // max_price)
 
-def verify_order_execution(client, order_id):
+async def verify_order_execution(client, order_id):
     """Verify if the order has been executed successfully."""
     try:
-        status = client.check_order_status(order_id)
+        status = await asyncio.to_thread(client.check_order_status, order_id)
         if status == "EXECUTED":
-            print(f"Order {order_id} successfully executed.")
+            logging.info(f"Order {order_id} successfully executed.")
             return True
         else:
-            print(f"Order {order_id} not executed yet. Status: {status}")
+            logging.info(f"Order {order_id} not executed yet. Status: {status}")
             return False
     except Exception as e:
-        print(f"Error verifying order {order_id}: {e}")
+        logging.error(f"Error verifying order {order_id}: {e}")
         return False
 
-def execute_trade(client, stock, exchange, order_type, price, quantity):
+async def execute_trade(client, stock, exchange, order_type, price, quantity):
     """Execute buy/sell trade and verify its execution."""
     try:
         order = {
@@ -82,27 +90,27 @@ def execute_trade(client, stock, exchange, order_type, price, quantity):
             "Price": price,
             "Quantity": quantity,
         }
-        response = client.place_order(order)
+        response = await asyncio.to_thread(client.place_order, order)
         order_id = response.get("OrderID")
-        print(f"Placed {order_type} order for {stock} on {exchange} at {price} x {quantity}: {response}")
+        logging.info(f"Placed {order_type} order for {stock} on {exchange} at {price} x {quantity}: {response}")
 
         # Verify order execution
         if order_id:
-            if verify_order_execution(client, order_id):
+            if await verify_order_execution(client, order_id):
                 return price * quantity
             else:
-                print(f"Order {order_id} for {stock} on {exchange} failed to execute.")
+                logging.warning(f"Order {order_id} for {stock} on {exchange} failed to execute.")
                 return 0
         else:
-            print("No OrderID returned in response.")
+            logging.warning("No OrderID returned in response.")
             return 0
     except Exception as e:
-        print(f"Error in execute_trade for {stock}: {e}")
+        logging.error(f"Error in execute_trade for {stock}: {e}")
         return 0
 
-def check_arbitrage(client, stock, margin_per_stock, executed_orders):
+async def check_arbitrage(client, stock, margin_per_stock, executed_orders):
     """Check for arbitrage opportunities and execute trades if found."""
-    data = get_market_data(client, stock)
+    data = await get_market_data(client, stock)
     if not data:
         return
 
@@ -116,23 +124,23 @@ def check_arbitrage(client, stock, margin_per_stock, executed_orders):
     bse_ask_volume = data["BSE"]["ask_volume"]
 
     max_price = max(nse_ask, bse_bid, nse_bid, bse_ask)
-    quantity = calculate_quantity(margin_per_stock, max_price)
+    quantity = await calculate_quantity(margin_per_stock, max_price)
 
     if bse_bid - nse_ask > ARBITRAGE_THRESHOLD and \
        nse_ask_volume >= 5 * quantity and bse_bid_volume >= 5 * quantity:
-        total_amount = execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
-                       execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
+        total_amount = await execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
+                       await execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
         executed_orders.append(total_amount)
     elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD and \
          bse_ask_volume >= 5 * quantity and nse_bid_volume >= 5 * quantity:
-        total_amount = execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
-                       execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
+        total_amount = await execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
+                       await execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
         executed_orders.append(total_amount)
 
-def main():
-    client = perform_action()
+async def main():
+    client = await perform_action()
     if not client:
-        print("Failed to initialize client session.")
+        logging.error("Failed to initialize client session.")
         return
 
     margin_per_stock = float(input("Enter the margin for each stock trade: "))
@@ -140,20 +148,22 @@ def main():
 
     while True:
         start_time = time.time()
-        for stock in stocks:
+        tasks = [
             check_arbitrage(client, stock, margin_per_stock, executed_orders)
+            for stock in stocks
+        ]
+        await asyncio.gather(*tasks)
         total_amount = sum(executed_orders)
-        print(f"Total amount for executed orders so far: {total_amount}")
+        logging.info(f"Total amount for executed orders so far: {total_amount}")
 
-        # Adjust sleep time dynamically to minimize latency
         elapsed_time = time.time() - start_time
-        sleep_time = max(0, 5 - elapsed_time)  # Maintain 5-second cycles
-        time.sleep(sleep_time)
+        sleep_time = max(0, 5 - elapsed_time) 
+        await asyncio.sleep(sleep_time)
 
 if __name__ == "__main__":
     try:
-        main()
+        asyncio.run(main())
     except KeyboardInterrupt:
-        print("Process interrupted by user. Exiting...")
+        logging.info("Process interrupted by user. Exiting...")
     except Exception as e:
-        print(f"Error in main execution: {e}")
+        logging.error(f"Error in main execution: {e}")
