@@ -12,7 +12,9 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 
 # Read configuration
 config = configparser.ConfigParser()
-config.read("config.ini")
+
+config.read("config.ini", encoding="utf-8-sig")
+
 
 # Access values
 ARBITRAGE_THRESHOLD = float(config["TRADE"]["ArbitrageThreshold"])
