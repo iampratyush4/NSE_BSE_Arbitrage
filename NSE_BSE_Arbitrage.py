@@ -16,20 +16,14 @@ def perform_action():
                 return client
         else:
             print("No active session found. Logging in...")
-            client = login()
-            return client
-    except (FileNotFoundError, pickle.UnpicklingError) as e:
-        print(f"Error loading session file: {e}")
+            return login()
     except Exception as e:
-        print(f"Unexpected error in perform_action: {e}")
-    return None
+        print(f"Error in perform_action: {e}")
+        return None
 
 def get_market_data(client, stock):
     """Fetch bid and ask prices for NSE and BSE."""
     try:
-        if not client:
-            raise ValueError("Client session is not available.")
-        
         market_data = client.fetch_market_depth(stock)
         if market_data:
             return {
@@ -44,59 +38,17 @@ def get_market_data(client, stock):
             }
         else:
             print(f"No market data available for {stock}.")
-    except ValueError as ve:
-        print(f"ValueError: {ve}")
-    except AttributeError as e:
-        print(f"Error fetching market data for {stock}: {e}")
     except Exception as e:
-        print(f"Unexpected error in get_market_data for {stock}: {e}")
+        print(f"Error in get_market_data for {stock}: {e}")
     return None
 
 def calculate_quantity(margin_per_stock, max_price):
     """Calculate the quantity based on the margin for each stock and the maximum price."""
     return max(1, margin_per_stock // max_price)
 
-def check_arbitrage(client, stock, margin_per_stock, executed_orders):
-    """Check for arbitrage opportunities and execute trades if found."""
-    try:
-        data = get_market_data(client, stock)
-        if not data:
-            return
-
-        nse_bid = data["NSE"]["bid"]
-        nse_ask = data["NSE"]["ask"]
-        bse_bid = data["BSE"]["bid"]
-        bse_ask = data["BSE"]["ask"]
-
-        if bse_bid - nse_ask > ARBITRAGE_THRESHOLD:
-            max_price = max(bse_bid, nse_ask)
-            quantity = calculate_quantity(margin_per_stock, max_price)
-            print(f"Arbitrage Opportunity: Buy {stock} on NSE at {nse_ask}, Sell on BSE at {bse_bid}, Quantity: {quantity}")
-            total_amount = execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
-                           execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)       
-            executed_orders.append(total_amount)
-
-        elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD:
-            max_price = max(nse_bid, bse_ask)
-            quantity = calculate_quantity(margin_per_stock, max_price)
-            print(f"Arbitrage Opportunity: Buy {stock} on BSE at {bse_ask}, Sell on NSE at {nse_bid}, Quantity: {quantity}")
-            total_amount = execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
-                           execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
-            executed_orders.append(total_amount)
-        else:
-            print(f"No arbitrage for {stock}")
-
-    except KeyError as e:
-        print(f"Missing data for {stock}: {e}")
-    except Exception as e:
-        print(f"Unexpected error in check_arbitrage for {stock}: {e}")
-
 def execute_trade(client, stock, exchange, order_type, price, quantity):
     """Execute buy/sell trade."""
     try:
-        if not client:
-            raise ValueError("Client session is not available.")
-        
         order = {
             "Exchange": exchange,
             "OrderType": order_type,
@@ -107,34 +59,59 @@ def execute_trade(client, stock, exchange, order_type, price, quantity):
         response = client.place_order(order)
         print(f"Executed {order_type} order for {stock} on {exchange} at {price} x {quantity}: {response}")
         return price * quantity
-    except ValueError as ve:
-        print(f"ValueError: {ve}")
     except Exception as e:
-        print(f"Unexpected error in execute_trade for {stock}: {e}")
+        print(f"Error in execute_trade for {stock}: {e}")
         return 0
+
+def check_arbitrage(client, stock, margin_per_stock, executed_orders):
+    """Check for arbitrage opportunities and execute trades if found."""
+    data = get_market_data(client, stock)
+    if not data:
+        return
+
+    nse_bid = data["NSE"]["bid"]
+    nse_ask = data["NSE"]["ask"]
+    bse_bid = data["BSE"]["bid"]
+    bse_ask = data["BSE"]["ask"]
+
+    max_price = max(nse_ask, bse_bid, nse_bid, bse_ask)
+
+    if bse_bid - nse_ask > ARBITRAGE_THRESHOLD:
+        quantity = calculate_quantity(margin_per_stock, max_price)
+        total_amount = execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
+                       execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
+        executed_orders.append(total_amount)
+    elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD:
+        quantity = calculate_quantity(margin_per_stock, max_price)
+        total_amount = execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
+                       execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
+        executed_orders.append(total_amount)
+
+def main():
+    client = perform_action()
+    if not client:
+        print("Failed to initialize client session.")
+        return
+
+    margin_per_stock = float(input("Enter the margin for each stock trade: "))
+    executed_orders = []
+
+    while True:
+        start_time = time.time()
+        for stock in stocks:
+            check_arbitrage(client, stock, margin_per_stock, executed_orders)
+        total_amount = sum(executed_orders)
+        print(f"Total amount for executed orders so far: {total_amount}")
+
+        # Adjust sleep time dynamically to minimize latency
+        elapsed_time = time.time() - start_time
+        sleep_time = max(0, 5 - elapsed_time)  # Maintain 5-second cycles
+        time.sleep(sleep_time)
 
 if __name__ == "__main__":
     try:
-        client = perform_action()
-        if not client:
-            raise RuntimeError("Failed to initialize client session.")
-
-        margin_per_stock = float(input("Enter the margin for each stock trade: "))
-        executed_orders = []
-
-        print(client.holdings())
-
-        while True:
-            for stock in stocks:
-                check_arbitrage(client, stock, margin_per_stock, executed_orders)
-            time.sleep(5)  # Check every 5 seconds
-
-            total_amount = sum(executed_orders)
-            print(f"Total amount for executed orders so far: {total_amount}")
-    
-    except RuntimeError as re:
-        print(f"RuntimeError: {re}")
+        main()
     except KeyboardInterrupt:
         print("Process interrupted by user. Exiting...")
     except Exception as e:
-        print(f"Unexpected error in main execution: {e}")
+        print(f"Error in main execution: {e}")
