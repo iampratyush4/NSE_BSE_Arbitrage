@@ -11,7 +11,6 @@ def create_client():
     client = FivePaisaClient(cred=Cred.cred)
     return client
 
-
 def login():
     """Logs in the user and saves the session if not already logged in."""
     if os.path.exists(SESSION_FILE):
@@ -22,12 +21,19 @@ def login():
 
     # Create a new session if no session exists
     client = create_client()
-    client.get_totp_session(
-        client_code=Cred.client_code,
-        pin=Cred.pin,
-        totp=input('Enter your TOTP'),
-        
-    )
+    try:
+        client.get_totp_session(
+            client_code=Cred.client_code,
+            pin=Cred.pin,
+            totp=input('Enter your TOTP: '),
+        )
+        # Check if the session is valid
+        if not client.is_logged_in:
+            raise Exception("Invalid TOTP. Login failed.")
+    except Exception as e:
+        print(f"Error during login: {e}")
+        return None  # Stop further execution
+
     with open(SESSION_FILE, "wb") as f:
         pickle.dump(client, f)
     print("Logged in and session saved.")

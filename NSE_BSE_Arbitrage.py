@@ -43,6 +43,7 @@ async def get_market_data(client, stock):
     """Fetch bid and ask prices for NSE and BSE."""
     try:
         market_data = await asyncio.to_thread(client.fetch_market_depth, stock)
+
         if market_data:
             return {
                 "NSE": {
