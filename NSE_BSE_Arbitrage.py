@@ -73,8 +73,9 @@ def check_arbitrage(client, stock, margin_per_stock, executed_orders):
             quantity = calculate_quantity(margin_per_stock, max_price)
             print(f"Arbitrage Opportunity: Buy {stock} on NSE at {nse_ask}, Sell on BSE at {bse_bid}, Quantity: {quantity}")
             total_amount = execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
-                           execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
+                           execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)       
             executed_orders.append(total_amount)
+
         elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD:
             max_price = max(nse_bid, bse_ask)
             quantity = calculate_quantity(margin_per_stock, max_price)
@@ -84,6 +85,7 @@ def check_arbitrage(client, stock, margin_per_stock, executed_orders):
             executed_orders.append(total_amount)
         else:
             print(f"No arbitrage for {stock}")
+
     except KeyError as e:
         print(f"Missing data for {stock}: {e}")
     except Exception as e:
