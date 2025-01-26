@@ -129,15 +129,25 @@ async def check_arbitrage(client, stock, margin_per_stock, executed_orders):
     max_price = max(nse_ask, bse_bid, nse_bid, bse_ask)
     quantity = await calculate_quantity(margin_per_stock, max_price)
 
-    if bse_bid - nse_ask > ARBITRAGE_THRESHOLD and \
-       nse_ask_volume >= 5 * quantity and bse_bid_volume >= 5 * quantity:
-        total_amount = await execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
-                       await execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
-        executed_orders.append(total_amount)
-    elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD and \
-         bse_ask_volume >= 5 * quantity and nse_bid_volume >= 5 * quantity:
+    # if bse_bid - nse_ask > ARBITRAGE_THRESHOLD and \
+    #    nse_ask_volume >= 5 * quantity and bse_bid_volume >= 5 * quantity:
+    #     total_amount = await execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
+    #                    await execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
+    #     executed_orders.append(total_amount)
+    # elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD and \
+    #      bse_ask_volume >= 5 * quantity and nse_bid_volume >= 5 * quantity:
+    #     total_amount = await execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
+    #                    await execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
+    #     executed_orders.append(total_amount)
+    if ((bse_bid - nse_ask) / nse_ask > ARBITRAGE_THRESHOLD) and \
+        nse_ask_volume >= 5 * quantity and bse_bid_volume >= 5 * quantity:
+            total_amount = await execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
+                        await execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
+            executed_orders.append(total_amount)
+    elif ((nse_bid - bse_ask) / bse_ask > ARBITRAGE_THRESHOLD) and \
+        bse_ask_volume >= 5 * quantity and nse_bid_volume >= 5 * quantity:
         total_amount = await execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
-                       await execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
+                    await execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
         executed_orders.append(total_amount)
 
 async def main():
@@ -146,6 +156,7 @@ async def main():
         logging.error("Failed to initialize client session.")
         return
     logging.info(f"Total Margin available for this client is: {client.margin()}")
+
     margin_per_stock = float(input("Enter the margin for each stock trade: "))
     executed_orders = []
 
