@@ -1,8 +1,7 @@
 import pickle
 import os
 import time
-from login_manager import login, logout_and_login, SESSION_FILE
-
+from login_manager import login, logout_and_login
 import configparser
 
 # Read configuration
