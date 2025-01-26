@@ -3,8 +3,17 @@ import os
 import time
 from login_manager import login, logout_and_login, SESSION_FILE
 
-stocks = ["RELIANCE", "TCS", "INFY", "HDFC"]
-ARBITRAGE_THRESHOLD = 0.5
+import configparser
+
+# Read configuration
+config = configparser.ConfigParser()
+config.read("config.ini")
+
+# Access values
+ARBITRAGE_THRESHOLD = float(config["TRADE"]["ArbitrageThreshold"])
+SESSION_FILE = config["FILES"]["SessionFile"]
+stocks = config["STOCKS"]["StockList"].split(", ")
+
 
 def perform_action():
     """Performs actions using the logged-in session."""
