@@ -22,14 +22,23 @@ def login():
     # Create a new session if no session exists
     client = create_client()
     try:
-        client.get_totp_session(
+        response = client.get_totp_session(
             client_code=Cred.client_code,
             pin=Cred.pin,
-            totp=input('Enter your TOTP: '),
+            totp=input('Enter your TOTP: ')
         )
-        # Check if the session is valid
-        if not client.is_logged_in:
-            raise Exception("Invalid TOTP. Login failed.")
+        
+        # Handle different response types
+        if isinstance(response, str):
+            # Assume successful login if response is a token string
+            print("TOTP validated successfully.")
+        elif isinstance(response, dict):
+            # Check if the response contains an error status
+            if response.get("Status") != 0:
+                raise Exception(f"Login failed: {response.get('Message', 'Unknown error')}")
+        else:
+            raise Exception("Unexpected response format from server.")
+
     except Exception as e:
         print(f"Error during login: {e}")
         return None  # Stop further execution
@@ -38,7 +47,6 @@ def login():
         pickle.dump(client, f)
     print("Logged in and session saved.")
     return client
-
 
 def logout_and_login():
     """Logs out the existing session and logs in again."""

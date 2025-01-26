@@ -145,7 +145,7 @@ async def main():
     if not client:
         logging.error("Failed to initialize client session.")
         return
-
+    logging.info(f"Total Margin available for this client is: {client.margin()}")
     margin_per_stock = float(input("Enter the margin for each stock trade: "))
     executed_orders = []
 
