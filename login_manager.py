@@ -22,7 +22,7 @@ def login():
                 return client
             else:
                 logging.error("File exists but Session Lost try with another TOTP")
-                client= create_client()
+                client= create_login()
                 if client.margin():
                     logging.info("correct totp")
                     return client
