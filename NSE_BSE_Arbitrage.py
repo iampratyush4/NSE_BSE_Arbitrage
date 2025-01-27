@@ -151,13 +151,12 @@ async def check_arbitrage(client, stock, margin_per_stock, executed_orders):
         executed_orders.append(total_amount)
 
 async def main():
-    client = await perform_action()
-    if not client.margin():
+    client =  login()
+    if  client is None or not client.margin():
         logging.error("Failed to initialize client session.")
         return
-    else:
     
-        logging.info(f"Total Margin available for this client is: {client.margin()}")
+    logging.info(f"Total Margin available for this client is: {client.margin()}")
 
     margin_per_stock = float(input("Enter the margin for each stock trade: "))
     executed_orders = []

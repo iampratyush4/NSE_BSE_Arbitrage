@@ -1,3 +1,4 @@
+import logging
 import pickle
 import os
 from py5paisa import FivePaisaClient
@@ -16,10 +17,21 @@ def login():
     if os.path.exists(SESSION_FILE):
         with open(SESSION_FILE, "rb") as f:
             client = pickle.load(f)
-            print("Loaded existing session.")
-            return client
+            if client.margin():
+                logging.info("Loaded existing session.")
+                return client
+            else:
+                logging.error("File exists but Session Lost try with another TOTP")
+                client= create_client()
+                if client.margin():
+                    logging.info("correct totp")
+                    return client
+                return
+                
 
     # Create a new session if no session exists
+
+def create_login():
     client = create_client()
     try:
         response = client.get_totp_session(
@@ -27,11 +39,11 @@ def login():
             pin=Cred.pin,
             totp=input('Enter your TOTP: ')
         )
-        
+
         # Handle different response types
         if isinstance(response, str):
             # Assume successful login if response is a token string
-            print("TOTP validated successfully.")
+            logging.error("TOTP validated successfully.")
         elif isinstance(response, dict):
             # Check if the response contains an error status
             if response.get("Status") != 0:
@@ -55,7 +67,6 @@ def logout_and_login():
     os.remove(SESSION_FILE)  # Delete the existing session file
     print("Logged out from the current session. Logging in again...")
     return login()
-
 
 if __name__ == "__main__":
     client = login()
