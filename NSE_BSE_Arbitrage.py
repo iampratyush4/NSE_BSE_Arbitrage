@@ -1,43 +1,21 @@
-import pickle
-import os
-import time
-import configparser
+# NSE_BSE_Arbitrage.py
 import asyncio
+import time
 import logging
-from concurrent.futures import ThreadPoolExecutor
-from login_manager import login, logout_and_login
+import configparser
+from py5paisa.order import Order, OrderType, Exchange
+from login_manager import login
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-# Read configuration
+# Load config
 config = configparser.ConfigParser()
-
-config.read("config.ini", encoding="utf-8-sig")
-
-
-# Access values
+config.read("config.ini")
 ARBITRAGE_THRESHOLD = float(config["TRADE"]["ArbitrageThreshold"])
-SESSION_FILE = config["FILES"]["SessionFile"]
-stocks = config["STOCKS"]["StockList"].split(", ")
-
-# Thread pool for concurrent tasks
-executor = ThreadPoolExecutor(max_workers=10)
-
-async def perform_action():
-    """Performs actions using the logged-in session."""
-    try:
-        if os.path.exists(SESSION_FILE):
-            with open(SESSION_FILE, "rb") as f:
-                client = pickle.load(f)
-                logging.info("Using existing session.")
-                return client
-        else:
-            logging.info("No active session found. Logging in...")
-            return await asyncio.to_thread(login)
-    except Exception as e:
-        logging.error(f"Error in perform_action: {e}")
-        return None
+SCRIP_CODES = [int(code.strip()) for code in config["STOCKS"]["StockList"].split(",")]
+MAX_VERIFY_RETRIES = int(config.get("TRADE", "MaxVerifyRetries", fallback=5))
+VERIFY_DELAY = int(config.get("TRADE", "VerifyDelay", fallback=2))
 
 async def get_market_data(client, stock):
     """Fetch bid and ask prices for NSE and BSE."""
@@ -65,91 +43,83 @@ async def get_market_data(client, stock):
         logging.error(f"Error in get_market_data for {stock}: {e}")
     return None
 
-async def calculate_quantity(margin_per_stock, max_price):
-    """Calculate the quantity based on the margin for each stock and the maximum price."""
-    return max(1, margin_per_stock // max_price)
 
-async def verify_order_execution(client, order_id):
-    """Verify if the order has been executed successfully."""
-    try:
-        status = await asyncio.to_thread(client.check_order_status, order_id)
-        if status == "EXECUTED":
-            logging.info(f"Order {order_id} successfully executed.")
-            return True
-        else:
-            logging.info(f"Order {order_id} not executed yet. Status: {status}")
-            return False
-    except Exception as e:
-        logging.error(f"Error verifying order {order_id}: {e}")
-        return False
 
-async def execute_trade(client, stock, exchange, order_type, price, quantity):
-    """Execute buy/sell trade and verify its execution."""
+async def verify_order(client, order_id):
+    """Verify order execution status with retries"""
+    for _ in range(MAX_VERIFY_RETRIES):
+        await asyncio.sleep(VERIFY_DELAY)
+        try:
+            order_book = await asyncio.to_thread(client.order_book)
+            for order in order_book:
+                if str(order["OrderID"]) == str(order_id):
+                    status = order["Status"]
+                    if status in ["Fully Executed", "Completed"]:
+                        logging.info(f"Order {order_id} executed successfully")
+                        return True
+                    elif status in ["Rejected", "Cancelled"]:
+                        logging.warning(f"Order {order_id} failed with status: {status}")
+                        return False
+            logging.info(f"Order {order_id} still pending...")
+        except Exception as e:
+            logging.error(f"Order verification failed: {e}")
+    logging.warning(f"Order {order_id} not confirmed after {MAX_VERIFY_RETRIES} retries")
+    return False
+
+async def execute_trade(client, scrip_code, exchange, order_type, price, qty):
+    """Execute and verify trade"""
     try:
-        order = {
-            "Exchange": exchange,
-            "OrderType": order_type,
-            "ScripName": stock,
-            "Price": price,
-            "Quantity": quantity,
-        }
+        order = Order(
+            exchange="N" if exchange == "NSE" else "B",
+            exchange_type="C",
+            scrip_code=scrip_code,
+            quantity=qty,
+            price=round(price, 1),
+            order_type=OrderType.BUY if order_type == "BUY" else OrderType.SELL
+        )
         response = await asyncio.to_thread(client.place_order, order)
         order_id = response.get("OrderID")
-        logging.info(f"Placed {order_type} order for {stock} on {exchange} at {price} x {quantity}: {response}")
-
-        # Verify order execution
-        if order_id:
-            if await verify_order_execution(client, order_id):
-                return price * quantity
-            else:
-                logging.warning(f"Order {order_id} for {stock} on {exchange} failed to execute.")
-                return 0
-        else:
-            logging.warning("No OrderID returned in response.")
-            return 0
+        
+        if order_id and await verify_order(client, order_id):
+            return True
+        return False
     except Exception as e:
-        logging.error(f"Error in execute_trade for {stock}: {e}")
-        return 0
+        logging.error(f"Trade execution failed: {e}")
+        return False
 
-async def check_arbitrage(client, stock, margin_per_stock, executed_orders):
-    """Check for arbitrage opportunities and execute trades if found."""
-    data = await get_market_data(client, stock)
-    if not data:
-        return
+async def check_arbitrage(client, scrip_code, margin):
+    """Arbitrage logic with verified execution"""
+    data = await get_market_data(client, scrip_code)
+    if not data: return
 
-    nse_bid = data["NSE"]["bid"]
-    nse_ask = data["NSE"]["ask"]
-    bse_bid = data["BSE"]["bid"]
-    bse_ask = data["BSE"]["ask"]
-    nse_bid_volume = data["NSE"]["bid_volume"]
-    nse_ask_volume = data["NSE"]["ask_volume"]
-    bse_bid_volume = data["BSE"]["bid_volume"]
-    bse_ask_volume = data["BSE"]["ask_volume"]
-
+    nse_bid, nse_ask = data["NSE"]["bid"], data["NSE"]["ask"]
+    bse_bid, bse_ask = data["BSE"]["bid"], data["BSE"]["ask"]
+    
+    if nse_ask == 0 or bse_ask == 0: return
+    
+    spread_bse_bid_nse_ask = (bse_bid - nse_ask) / nse_ask
+    spread_nse_bid_bse_ask = (nse_bid - bse_ask) / bse_ask
+    
     max_price = max(nse_ask, bse_bid, nse_bid, bse_ask)
-    quantity = await calculate_quantity(margin_per_stock, max_price)
+    qty = max(1, int(margin // max_price))
+    
+    executed = False
+    if spread_bse_bid_nse_ask > ARBITRAGE_THRESHOLD:
+        buy_success = await execute_trade(client, scrip_code, "NSE", "BUY", nse_ask, qty)
+        sell_success = await execute_trade(client, scrip_code, "BSE", "SELL", bse_bid, qty)
+        executed = buy_success and sell_success
+        
+    elif spread_nse_bid_bse_ask > ARBITRAGE_THRESHOLD:
+        buy_success = await execute_trade(client, scrip_code, "BSE", "BUY", bse_ask, qty)
+        sell_success = await execute_trade(client, scrip_code, "NSE", "SELL", nse_bid, qty)
+        executed = buy_success and sell_success
+    
+    if executed:
+        logging.info(f"Arbitrage executed successfully for {scrip_code}")
+    else:
+        logging.warning(f"Arbitrage failed for {scrip_code}")
 
-    # if bse_bid - nse_ask > ARBITRAGE_THRESHOLD and \
-    #    nse_ask_volume >= 5 * quantity and bse_bid_volume >= 5 * quantity:
-    #     total_amount = await execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
-    #                    await execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
-    #     executed_orders.append(total_amount)
-    # elif nse_bid - bse_ask > ARBITRAGE_THRESHOLD and \
-    #      bse_ask_volume >= 5 * quantity and nse_bid_volume >= 5 * quantity:
-    #     total_amount = await execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
-    #                    await execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
-    #     executed_orders.append(total_amount)
-    if ((bse_bid - nse_ask) / nse_ask > ARBITRAGE_THRESHOLD) and \
-        nse_ask_volume >= 5 * quantity and bse_bid_volume >= 5 * quantity:
-            total_amount = await execute_trade(client, stock, "NSE", "BUY", nse_ask, quantity) + \
-                        await execute_trade(client, stock, "BSE", "SELL", bse_bid, quantity)
-            executed_orders.append(total_amount)
-    elif ((nse_bid - bse_ask) / bse_ask > ARBITRAGE_THRESHOLD) and \
-        bse_ask_volume >= 5 * quantity and nse_bid_volume >= 5 * quantity:
-        total_amount = await execute_trade(client, stock, "BSE", "BUY", bse_ask, quantity) + \
-                    await execute_trade(client, stock, "NSE", "SELL", nse_bid, quantity)
-        executed_orders.append(total_amount)
-
+# Rest of the code (get_market_data, main) remains same as previous version
 async def main():
     client =  login()
     if  client is None or not client.margin():
@@ -182,3 +152,14 @@ if __name__ == "__main__":
         logging.info("Process interrupted by user. Exiting...")
     except Exception as e:
         logging.error(f"Error in main execution: {e}")
+
+nifty_50_symbols = [
+    "ADANIENT", "ADANIPORTS", "APOLLOHOSP", "ASIANPAINT", "AXISBANK",
+    "BAJAJ-AUTO", "BAJFINANCE", "BAJAJFINSV", "BHARTIARTL", "BRITANNIA",
+    "CIPLA", "COALINDIA", "DIVISLAB", "DRREDDY", "EICHERMOT", "GRASIM",
+    "HCLTECH", "HDFCBANK", "HDFCLIFE", "HEROMOTOCO", "HINDALCO", "HINDUNILVR",
+    "ICICIBANK", "ITC", "INDUSINDBK", "INFY", "JSWSTEEL", "KOTAKBANK", "LT",
+    "M&M", "MARUTI", "NESTLEIND", "NTPC", "ONGC", "POWERGRID", "RELIANCE",
+    "SBIN", "SBILIFE", "SUNPHARMA", "TCS", "TATACONSUM", "TATAMOTORS",
+    "TATASTEEL", "TECHM", "TITAN", "ULTRACEMCO", "UPL", "WIPRO", "BPCL", "SHREECEM"
+]
