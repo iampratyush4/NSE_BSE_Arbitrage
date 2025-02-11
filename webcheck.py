@@ -4,6 +4,7 @@ import time
 import configparser
 import asyncio
 import logging
+from login_manager import login, logout_and_login
 
 config = configparser.ConfigParser()
 
@@ -32,7 +33,7 @@ def perform_action():
 
 
 if __name__ == "__main__":
-    client = perform_action()
+    client =login()
     if not client:
         logging.error("Failed to initialize client session.")
     else:
@@ -42,6 +43,7 @@ if __name__ == "__main__":
 
         # Prepare request data
         req_data = client.Request_Feed('mf', 's', req_list)
+        logging.info(req_data)
 
         # Define message handler
         def on_message(ws, message):
