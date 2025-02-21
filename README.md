@@ -49,7 +49,7 @@ This script identifies arbitrage opportunities between the NSE (National Stock E
 
 1. Clone this repository:
    ```bash
-   git clone <repository_url>
+   git clone https://github.com/iampratyush4/NSE_BSE_Arbitrage
    ```
 
 2. Install required dependencies:
